@@ -1,25 +1,201 @@
 ---
-title: "Reproducible Research: Peer Assessment 1"
-output: 
-  html_document:
-    keep_md: true
+title: "RepData_Course Project I"
+author: "Hao Wu"
+date: "04/15/2020"
+output: html_document
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
-## Loading and preprocessing the data
+## 1. Introduction
+
+A data set from a personal activity monitoring device will be analysis in this course project. The device collects data at 5 minute intervals through out the day. It consists of two month of data.
+
+The dataset has three variables:
+
+- steps: Number of steps taking in a 5-minute interval(missing values are coded as NA)
+
+- data: The date on which the measurement was taken in YYYY-MM-DD format
+
+- interval: Identifier for the 5-minute in which measurement was taken
+
+## 2. Locad library needed
+```{r message = FALSE}
+library(ggplot2)
+library(pander)
+library(tidyverse)
+library(data.table)
+```
+
+## 3. Read data
+```{r }
+data_activity <- read.csv("activity.csv") %>%
+        as.data.table()
+data_activity$date <- as.Date(data_activity$date)
+```
+
+## 4. Take a look at data
+### Summary of the data
+```{r }
+str(data_activity)
+summary(data_activity)
+```
+
+There were 288 observations for each day.
+In the attribute 'step', there are NA values. There are altogether 2304 NA values.
+
+### Summary the NA values by date
+```{r }
+SumNA <- data_activity[is.na(steps), .N, by = date]
+pander(SumNA)
+```
+
+There are 8 days that do not have any observations. For the rest, no missing values for step records.
+
+## 5 Analysis without filling in missing value
+### Histogram of the total number of steps taken per day
+```{r message = FALSE}
+SumDaily <- data_activity[, .(steps = sum(steps)), by = date]
+ggplot(data = SumDaily) +
+        geom_col(mapping = aes(x = date, y = steps))
+```
+
+### Mean and median number of steps taken each day
+```{r }
+print(paste("Mean number of steps taken eash day is ", mean(SumDaily$steps, na.rm = TRUE)))
+print(paste("Median number of steps taken eash day is ", median(SumDaily$steps, na.rm = TRUE)))
+```
 
 
+### Explore the average daily activity pattern: mean, median and max for each 5 minutes interval
+```{r }
+Sum5min <- data_activity[, 
+                         .(Mean = mean(steps, na.rm = TRUE), 
+                           Median = median(steps, na.rm = TRUE), 
+                           Max = max(steps, na.rm = TRUE)), 
+                         by =interval] %>%
+        .[, Hour := (0:287)*5/60,] %>%
+        pivot_longer(c('Mean', 'Median', 'Max'), names_to = 'StatType', values_to = 'steps')
 
-## What is mean total number of steps taken per day?
+ggplot(data = Sum5min) +
+        geom_point(mapping = aes(x = Hour, y = steps, colour = StatType)) +
+        scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, 3))
+        
 
+```
 
+1. Most of the movement happened about from 6:00am to 9:00pm every day(see from the plot for max steps in each 5 minutes interval).
 
-## What is the average daily activity pattern?
+2. About half of the total days, the movements mostly happened around 8:00am ~ 9:00am and 6:00pm ~ 7:00pm(see from the plot for median steps in each 5 minutes interval).
 
+The big variations in each 5 minutes interval during 6:00am ~ 9:00pm indicate there might have different patterns on different week day.So exploring the data based on week day is also needed.
 
+```{r }
+Sum5min_weekday <- data_activity[, weekday := wday(date), ] %>%
+        .[, 
+          .(Mean = mean(steps, na.rm = TRUE), 
+                Median = median(steps, na.rm = TRUE), 
+                Max = max(steps, na.rm = TRUE)), 
+          by = c( 'weekday','interval')] %>%
+        .[, Hour := rep((0:287)*5/60, times = 7)] %>%
+        pivot_longer(c('Mean', 'Median', 'Max'), names_to = 'StatType', values_to = 'steps')
 
-## Imputing missing values
+ggplot(data = Sum5min_weekday[,,]) +
+        geom_point(mapping = aes(x = Hour, y = steps, colour = StatType)) +
+        scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, 3)) +
+        facet_wrap(~ weekday, nrow = 7)
+```
 
+Sunday is the 1st day of the week. 
 
+From the plotting, it is clear that on each week day the distribution of the steps in each 5 minutes interval are different.
 
-## Are there differences in activity patterns between weekdays and weekends?
+## 6 Filling in all missing values and recalculated mean and median total number of steps taken perday
+### Strategy for handling missing value
+The general principal for choosing the values which will be used for filling in the missing value is: not changing the distribution as much as possible.
+In general, the distribution of step for each 5 minutes interval are different on each week day. Regarding to this, will use the median value of the step number based on each week day and each 5 minutes interval as the missing values.
+
+### Filling in all missing values and check
+```{r message = FALSE}
+#### Create datatable, add additional column for weekday
+new_data_activity <- data_activity[, weekday := wday(date), ]
+
+#### Calculated median value of the steps by weekday and interval
+new_Sum5min_weekday <- new_data_activity[, .(Median = median(steps, na.rm = TRUE)), by = c('weekday', 'interval')]
+
+new_data_activity <- dplyr::full_join(new_data_activity, new_Sum5min_weekday, by = NULL) %>%
+        as.data.table()
+
+new_data_activity$steps <- as.numeric(new_data_activity$steps)
+
+new_data_activity <- new_data_activity[is.na(steps), steps := Median, ] 
+
+#### Ploting the Mean, Median and Max based on week day and interval, thus to compare with the distribution withou filling in #### missing values
+new_Sum5min_weekday <- new_data_activity[, weekday := wday(date), ] %>%
+        .[, 
+          .(Mean = mean(steps, na.rm = TRUE), 
+                Median = median(steps, na.rm = TRUE), 
+                Max = max(steps, na.rm = TRUE)), 
+          by = c('weekday', 'interval')] %>%
+        .[, Hour := rep((0:287)*5/60, times = 7),] %>%
+        pivot_longer(c('Mean', 'Median', 'Max'), names_to = 'StatType', values_to = 'steps')
+
+ggplot(data = new_Sum5min_weekday) +
+        geom_point(mapping = aes(x = Hour, y = steps, colour = StatType)) +
+        scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, 3)) +
+        facet_wrap(~ weekday, nrow = 7) 
+
+```
+
+Comparing the plotting before and after filling in missing value, it seems no obvious difference. It verifys that the strategy used for filling in missing value is fine.
+
+### Make a histogram of the total number of steps taken per day, based on the new dataset
+```{r }
+new_SumDaily <- new_data_activity[, .(steps = sum(steps)), by = date]
+ggplot(data = new_SumDaily) +
+        geom_col(mapping = aes(x = date, y = steps))
+```
+
+### Mean and median number of steps taken each day, based on the new dataset
+```{r }
+print(paste("New mean number of steps taken eash day is ", mean(new_SumDaily$steps, na.rm = TRUE)))
+print(paste("New median number of steps taken eash day is ", median(new_SumDaily$steps, na.rm = TRUE)))
+```
+
+### Compare the mean and median before and after inputing missing value
+```{r }
+print(paste("Mean: ", mean(SumDaily$steps, na.rm = TRUE), "   ", "New mean: ", mean(new_SumDaily$steps, na.rm = TRUE)))
+print(paste("Median: ", median(SumDaily$steps, na.rm = TRUE), "   ", "New median: ", median(new_SumDaily$steps, na.rm = TRUE)))
+```
+Both mean and median are smaller than without inputing missing value. Before inputing missing value, there was smaller difference between mean and median vavlue. After inputing missing value with the strategy defined, the difference between mean and median value increased a lot.
+
+## 7 Explore activity patterns between weekdays and weekends
+Calculate average steps for each 5 minutes based on weekday and weekend. Median is used as average here.
+
+In order to helps better understand the pattern of activities, the unit of 5 minute interval was changed from minutes to hours.
+```{r }
+#### Add additional variable which figure out the weekday and weekend for each day
+new_data_activity %>%
+        .[,DayType := "weekday",] %>%
+        .[weekday == 1 | weekday == 7, DayType := "weekend",]
+
+#### Calculate average steps based on weekday/weekend and 5 minutes interval
+new_Sum5min_DayType <- new_data_activity [,
+                                          .(AvgSteps = median(steps)),
+                                          by = c('DayType', 'interval')] %>%
+                        .[, Hour := rep((0:287)*5/60, times = 2),]
+
+#### Plotting the based on the unit of 24 hours, instead of minutes. The reason is the unit of hours will helps to understand the activity pattern #### much better than the unit in minutes
+ggplot(data = new_Sum5min_DayType) +
+        geom_line(mapping = aes(x = Hour, y = AvgSteps)) +
+        scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, 3)) +
+        facet_wrap(~ DayType, nrow = 2) 
+```
+
+As we could see from the plotting for the patterns:
+
+1. For the week day, the movement of this guy in the morning are mostly during around 6:30am to around 9:00am. Most possible activities are getting up, washing, breakfast and going to work. From around 9:30am to 12:00pm, there are generally no movement at all. He or she was supposed to work, and the work was done in a way that has little movement(sitting by the table). There is about 20 to 30 minutes in the noon that has some movement, most possiblly for going to some place for lunch. In the afternoon, from around 12:30pm to around 5:30pm, he or she was supposed to work and has little movement at all. From around 5:30 pm to 7:30 pm he or she is back to home, having dinner. After 7:30pm there is little movement, most possibly rest in home(watching TV in the Sofa and sleeping in bed).
+
+2. On the weekend, he or she get up later than the week day, get up around 8:00 am in teh morning. There are more frequent movements from 8:00 am to 9:00pm, mostly possible for the out door activities, or social events. After 9:30 pm, most possiblly rest in bed.
